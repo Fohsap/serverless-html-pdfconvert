@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDF to Images Converter</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #pdf-container { margin-top: 20px; }
+        .page-container { position: relative; margin-bottom: 20px; border-bottom: 1px solid #ccc; padding: 10px; }
+        .page-checkbox { position: absolute; top: 10px; left: 10px; z-index: 2; }
+        canvas { border: 1px solid #ddd; margin: 5px; }
+        #controls { margin: 20px 0; }
+        button { padding: 10px 20px; margin-right: 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <input type="file" id="pdfInput" accept=".pdf">
+    <div id="controls">
+        <button onclick="selectAll()">Select All</button>
+        <button onclick="deselectAll()">Deselect All</button>
+        <button onclick="downloadSelected()">Download Selected</button>
+    </div>
+    <div id="pdf-container"></div>
+
+    <!-- PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- JSZip for creating zip archives -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- FileSaver.js for saving files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <script>
+        let currentPDF = null;
+        const pdfContainer = document.getElementById('pdf-container');
+
+        pdfInput.addEventListener('change', async function(event) {
+            const file = event.target.files[0];
+            if (file && file.type === 'application/pdf') {
+                const fileReader = new FileReader();
+                
+                fileReader.onload = async function() {
+                    try {
+                        pdfContainer.innerHTML = '';
+                        const pdfData = new Uint8Array(this.result);
+                        currentPDF = await pdfjsLib.getDocument({ data: pdfData }).promise;
+                        
+                        // Render all pages
+                        for(let pageNum = 1; pageNum <= currentPDF.numPages; pageNum++) {
+                            const page = await currentPDF.getPage(pageNum);
+                            const viewport = page.getViewport({ scale: 1.5 });
+                            
+                            const pageDiv = document.createElement('div');
+                            pageDiv.className = 'page-container';
+                            pageDiv.innerHTML = `
+                                <input type="checkbox" class="page-checkbox" checked>
+                                <canvas></canvas>
+                            `;
+                            
+                            const canvas = pageDiv.querySelector('canvas');
+                            const context = canvas.getContext('2d');
+                            canvas.height = viewport.height;
+                            canvas.width = viewport.width;
+                            
+                            await page.render({
+                                canvasContext: context,
+                                viewport: viewport
+                            }).promise;
+                            
+                            pdfContainer.appendChild(pageDiv);
+                        }
+                    } catch (error) {
+                        console.error('Error loading PDF:', error);
+                        alert('Error loading PDF. Make sure it\'s a valid PDF file.');
+                    }
+                };
+
+                fileReader.readAsArrayBuffer(file);
+            }
+        });
+
+        // Selection controls
+        function selectAll() {
+            document.querySelectorAll('.page-checkbox').forEach(checkbox => {
+                checkbox.checked = true;
+            });
+        }
+
+        function deselectAll() {
+            document.querySelectorAll('.page-checkbox').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+        }
+
+        // Download functionality
+        async function downloadSelected() {
+            const zip = new JSZip();
+            const selectedPages = Array.from(document.querySelectorAll('.page-checkbox:checked'));
+            
+            if(selectedPages.length === 0) {
+                alert('Please select at least one page to download');
+                return;
+            }
+
+            // Create zip archive
+            for(const [index, checkbox] of selectedPages.entries()) {
+                const canvas = checkbox.closest('.page-container').querySelector('canvas');
+                const pageNumber = index + 1;
+                
+                // Convert canvas to blob
+                const blob = await new Promise(resolve => {
+                    canvas.toBlob(resolve, 'image/png', 1);
+                });
+                
+                zip.file(`page-${pageNumber}.png`, blob);
+            }
+
+            // Generate zip file
+            const content = await zip.generateAsync({ type: 'blob' });
+            saveAs(content, 'selected-pages.zip');
+        }
+
+        // Drag and drop support
+        document.addEventListener('dragover', (e) => e.preventDefault());
+        document.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files[0]) {
+                pdfInput.files = e.dataTransfer.files;
+                pdfInput.dispatchEvent(new Event('change'));
+            }
+        });
+    </script>
+</body>
+</html>
